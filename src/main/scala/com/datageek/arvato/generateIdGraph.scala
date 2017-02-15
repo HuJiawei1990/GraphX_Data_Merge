@@ -24,26 +24,28 @@ object generateIdGraph {
     val sourceId : VertexId = 2L
     //val myIdType = "CUST_ID"
     val myIdType = "MOBILE"
+    val alpha = 0.9     // this variable is defined as loss coefficient when table jump
 
     // define weights of different properties of ID
-    val allSrcTables = Array("T_CUSTOMER", "T_MEMBER", "T_ORDER_LOGISTICS",
-      "T_CUSTOMER_DELIVER", "T_CUSTOMER_CONTACT", "T_ORDER", "T_CUSTOMER_WEIXIN",
-      "T_POINT_LIST", "P_THIRD_CUST_ATTENTION", "P_WECHAT_CUST_ATTENTION",
-      "ONLINE_TRACKING", "SMS", "EDM_OPEN", "EDM_OPEN", "EDM_CLICK")
 
+    if (testMode == 1){
+      println("********** hjw test info **********")
+      println("time decay model output " + timeDecayLog(100).toString)
+    }
     // ============================================
     // =========== Load graph from files ==========
     // ============================================
 
     // ====== Graph node : all ID information
     val allIdFile = "./src/test/data/allIdValues.csv"
-    val allId : RDD[(VertexId, (String, String, String, String))] = sc.textFile(allIdFile).map{
-      line => val fields = line.split(",")
+    val allId : RDD[(VertexId, (String, String, String, String, Double))] = sc.textFile(allIdFile).map{
+      line => val fields = line.split("\t")
         (fields(0).toLong,    // vertex ID
           (fields(1),         // source table
            fields(2),         // ID name (column name)
            fields(3),         // ID type
-           fields(4))         // ID value
+           fields(4),         // ID value
+           fields(6).toDouble * fields(7).toDouble)   // ID weight
         )
     }
 
@@ -52,7 +54,7 @@ object generateIdGraph {
       println("*** There are " + allId.count() + " nodes.")
     }
 
-    val defaultId = ("NULL", "NULL", "NULL", "NULL")
+    val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0)
 
     // ===== Graph edges
     // ===== type 1: all ID from the same table
@@ -183,10 +185,10 @@ object generateIdGraph {
     // add the min sum of edge-weights as a new attribute into vertex.attr
     // filter all vertices whose new attribute < inf
     // it means these vertices are connected to the
-    val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices){
-      case (vid, attr, Some(pathLength)) => (attr, pathLength)
-      case (vid, attr, None) => (attr, Double.PositiveInfinity)
-    }.vertices.filter {
+    val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices) {
+        case (vid, attr, Some(pathLength)) => ((attr._1, attr._2, attr._3, attr._4, attr._5 * math.pow(alpha, pathLength)), pathLength)
+        case (vid, attr, None) => (attr, Double.PositiveInfinity)
+      }.vertices.filter {
       case (_, attr) => attr._2 < Double.PositiveInfinity
     }
 
@@ -210,7 +212,34 @@ object generateIdGraph {
       println(connectedVerticesType.collect.mkString("\n"))
     }
 
+    val a = connectedVerticesType.map {
+      case (id, attr) => (attr._1._4, attr._1._5)
+    }.reduceByKey(_+_)
+
+    if (testMode == 1) {
+      println("********** hjw test info **********")
+      println(a.collect.mkString("\n"))
+
+    }
   }
+
+  /*
+   *
+   */
+  def timeDecayLog(daysDiff: Int, T_half: Int = 200, T_total: Int = 360): Double = {
+    if (daysDiff >= T_total) 0.0
+    else {
+      val gamma : Double = (2 * T_half - T_total).toDouble / ((T_total - T_half) * (T_total - T_half)).toDouble
+      //println("we calculate the gamma = " + gamma.toString)
+      math.log((T_total - daysDiff) * gamma + 1) / math.log(T_total * gamma + 1)
+      //println("the result is " + result.toString)
+    }
+  }
+
+  def timeDecayExp(daysDiff : Int, T_half : Int, T_total : Int ): Double = {
+    0.0
+  }
+
 
   /*
   def generateShortestPathGraph(srcGraph: Graph[VD, Int] , srcId: VertexId): Graph[VD, Int] = {
