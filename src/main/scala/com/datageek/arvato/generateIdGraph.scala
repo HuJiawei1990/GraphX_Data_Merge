@@ -24,6 +24,7 @@ object generateIdGraph {
     val sourceId : VertexId = 2L
     //val myIdType = "CUST_ID"
     val myIdType = "MOBILE"
+    //val myIdType = "EMAIL"
     val alpha = 0.9     // this variable is defined as loss coefficient when table jump
 
     // define weights of different properties of ID
@@ -45,6 +46,7 @@ object generateIdGraph {
            fields(2),         // ID name (column name)
            fields(3),         // ID type
            fields(4),         // ID value
+           //fields(5).toInt,
            fields(6).toDouble * fields(7).toDouble)   // ID weight
         )
     }
@@ -54,17 +56,17 @@ object generateIdGraph {
       println("*** There are " + allId.count() + " nodes.")
     }
 
-    val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0)
+    //val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0)
 
     // ===== Graph edges
     // ===== type 1: all ID from the same table
     val IdParisFile1 = "./src/test/data/associatedIdPairs.csv"
     val IdPairs1 : RDD[Edge[Int]] = sc.textFile(IdParisFile1).map {
       line => val fields = line.split(",")
-        Edge( fields(1).toLong,           // source node ID
-        fields(2).toLong,                 // destination node ID
-        firstTypeEdgeWeight               // relationship type => from the same table
-      )
+        Edge( fields(1).toLong,             // source node ID
+          fields(2).toLong,                 // destination node ID
+          firstTypeEdgeWeight               // relationship type => from the same table
+        )
     }
 
     // ===== type 2: all ID have the same value
@@ -84,8 +86,7 @@ object generateIdGraph {
     }
 
     val IdPairs = IdPairs1.union(IdPairs2)
-
-    val graph = Graph(allId, IdPairs, defaultId)
+    val graph = Graph(allId, IdPairs)
 
     // ====== output the whole graph
     if (debugMode == 1) {
@@ -100,7 +101,7 @@ object generateIdGraph {
     }
 
     // create the non-directed graph by adding the reverse of the original graph
-    val nonDirectedGraph = Graph(graph.vertices, graph.edges.union(graph.reverse.edges), defaultId)
+    val nonDirectedGraph = Graph(graph.vertices, graph.edges.union(graph.reverse.edges))
 
     if (testMode == 1) {
       println("********** hjw test info **********")
@@ -143,8 +144,6 @@ object generateIdGraph {
     // ===== test shortest path algorithm
     // ===== count the jump times between tables when join
     // ===========================================
-
-    // define a source vertex, and we will find shortest path from this source to all other vertices
 
     // Define a initial graph which has the same structure with the original graph
     // vertices has one attribute at beginning
@@ -192,10 +191,22 @@ object generateIdGraph {
       case (_, attr) => attr._2 < Double.PositiveInfinity
     }
 
+    val aa = connectedVerticesAllInfo.map{
+      case (id, attr) => ((attr._1._3, attr._1._4), attr._1._5)
+    }.reduceByKey(_ + _)
+
+    val aaa = connectedVerticesAllInfo.map{
+      case (id, attr) => (attr._1._4, attr._1._5)
+    }.reduceByKey(_ + _)
+
     if (testMode == 1){
       println("********** hjw debug info **********")
       println("*** There are " + connectedVerticesAllInfo .count() + " vertices connected to vertex ID = " + sourceId)
       println(connectedVerticesAllInfo.collect.mkString("\n"))
+
+      println("********** hjw debug info **********")
+      println(aa.collect.mkString("\n"))
+      println(aaa.collect.mkString("\n"))
     }
 
     // =====================================
@@ -219,12 +230,16 @@ object generateIdGraph {
     if (testMode == 1) {
       println("********** hjw test info **********")
       println(a.collect.mkString("\n"))
-
     }
   }
 
   /*
-   *
+   * This function is used to compute the time delay coefficient by a logarithm model
+   * @param daysDiff: difference in days from now to last update time
+   * @param T_half:   days when this coef reduces to 0.5
+   * @param T_total:  days when this coef redeces to 0
+   * NOTE: in this model we should have
+   *        2 * T_half > T_total
    */
   def timeDecayLog(daysDiff: Int, T_half: Int = 200, T_total: Int = 360): Double = {
     if (daysDiff >= T_total) 0.0
@@ -236,6 +251,7 @@ object generateIdGraph {
     }
   }
 
+  //TODO: define exponential time decay model
   def timeDecayExp(daysDiff : Int, T_half : Int, T_total : Int ): Double = {
     0.0
   }
