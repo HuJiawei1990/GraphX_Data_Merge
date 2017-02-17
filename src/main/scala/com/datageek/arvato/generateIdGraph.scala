@@ -3,10 +3,14 @@ package com.datageek.arvato
 /**
   * Created by Administrator on 2017/2/10.
   */
+import java.io.File
+
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.graphx._
 import org.apache.spark.rdd.RDD
+import org.apache.commons.io.FileUtils
+import org.apache.commons.io.filefilter.WildcardFileFilter
 
 object generateIdGraph {
   Logger.getLogger("org").setLevel(Level.WARN)
@@ -21,61 +25,72 @@ object generateIdGraph {
     val sc = new SparkContext(conf)
 
     // define variables
-    val sourceId : VertexId = 2L
+    val sourceId: VertexId = 2L
     //val myIdType = "CUST_ID"
-    val myIdType = "MOBILE"
+    //val myIdType = "MOBILE"
+    val myIdType = "OPENID"
     //val myIdType = "EMAIL"
-    val alpha = 0.9     // this variable is defined as loss coefficient when table jump
+    val alpha = 0.9 // this variable is defined as loss coefficient when table jump
 
+    val outputDir = "./target/output/"
+    FileUtils.deleteDirectory(new File(outputDir))
     // define weights of different properties of ID
 
-    if (testMode == 1){
+    if (testMode > 1) {
       println("********** hjw test info **********")
       println("time decay model output " + timeDecayLog(100).toString)
     }
+
     // ============================================
     // =========== Load graph from files ==========
+    //  Generate the ID connection Graphs
     // ============================================
 
     // ====== Graph node : all ID information
     val allIdFile = "./src/test/data/allIdValues.csv"
-    val allId : RDD[(VertexId, (String, String, String, String, Double))] = sc.textFile(allIdFile).map{
-      line => val fields = line.split("\t")
-        (fields(0).toLong,    // vertex ID
-          (fields(1),         // source table
-           fields(2),         // ID name (column name)
-           fields(3),         // ID type
-           fields(4),         // ID value
-           //fields(5).toInt,
-           fields(6).toDouble * fields(7).toDouble)   // ID weight
+    val allIdLine = sc.textFile(allIdFile)
+    val allId: RDD[(VertexId, (String, String, String, String, Double))] = allIdLine.map {
+      line =>
+        val fields = line.split("\t")
+        (fields(0).toLong, // vertex ID
+          (fields(1), // source table
+            fields(2), // ID name (column name)
+            fields(3), // ID type
+            fields(4), // ID value
+            //fields(5).toInt,
+            fields(6).toDouble * fields(7).toDouble) // ID weight
+          //fields(5).toInt)   // days difference from now to last update time
         )
     }
 
-    if (testMode == 1){
+    if (testMode == 1) {
       println("********** hjw test info **********")
       println("*** There are " + allId.count() + " nodes.")
     }
 
-    //val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0)
+    // define a default ID type
+    //val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0, -1)
 
     // ===== Graph edges
     // ===== type 1: all ID from the same table
     val IdParisFile1 = "./src/test/data/associatedIdPairs.csv"
-    val IdPairs1 : RDD[Edge[Int]] = sc.textFile(IdParisFile1).map {
-      line => val fields = line.split(",")
-        Edge( fields(1).toLong,             // source node ID
-          fields(2).toLong,                 // destination node ID
-          firstTypeEdgeWeight               // relationship type => from the same table
+    val IdPairs1: RDD[Edge[Int]] = sc.textFile(IdParisFile1).map {
+      line =>
+        val fields = line.split(",")
+        Edge(fields(1).toLong, // source node ID
+          fields(2).toLong, // destination node ID
+          firstTypeEdgeWeight // relationship type => from the same table
         )
     }
 
     // ===== type 2: all ID have the same value
     val IdParisFile2 = "./src/test/data/associatedKeyByValue.csv"
-    val IdPairs2 : RDD[Edge[Int]] = sc.textFile(IdParisFile2).map {
-      line => val fields = line.split(",")
-        Edge( fields(1).toLong,             // source node ID
-          fields(2).toLong,                 // destination node ID
-          secondTypeEdgeWeight              // relationship type => from the same table
+    val IdPairs2: RDD[Edge[Int]] = sc.textFile(IdParisFile2).map {
+      line =>
+        val fields = line.split(",")
+        Edge(fields(1).toLong, // source node ID
+          fields(2).toLong, // destination node ID
+          secondTypeEdgeWeight // relationship type => from the same table
         )
     }
 
@@ -106,6 +121,54 @@ object generateIdGraph {
     if (testMode == 1) {
       println("********** hjw test info **********")
       println("*** There are " + nonDirectedGraph.edges.count() + " connections in final graph.")
+    }
+
+    // ==============================================
+    // =========== Update the time information
+    // ==============================================
+
+    var IdUpdateTime: RDD[(VertexId, Int)] = allIdLine.map {
+      line =>
+        val fields = line.split("\t")
+        (fields(0).toLong, // vertex ID
+          fields(5).toInt // days difference from now to last update time
+        )
+    }.map{
+      vertex =>
+        if (vertex._2 < 0)  (vertex._1, Int.MaxValue)
+        else vertex
+    }
+
+    if (testMode == 1) {
+      println("********** hjw test info **********")
+      println("*** There are " + IdUpdateTime.count() + " vertices counted.")
+      println(IdUpdateTime.collect.mkString("\n"))
+    }
+
+    val updateTimeGraph = Graph(IdUpdateTime, IdPairs2)
+
+    IdUpdateTime = updateTimeGraph.aggregateMessages[Int](
+      triplet => {
+        // Send Message
+        if (triplet.srcAttr > 0)
+          triplet.sendToDst(triplet.srcAttr)
+        if (triplet.dstAttr > 0)
+          triplet.sendToSrc(triplet.dstAttr)
+        //else triplet.sendToDst(Int.MaxValue)
+      },
+      (a, b) => math.min(a, b) // Merge Message
+    )
+
+    val bb = updateTimeGraph.joinVertices(IdUpdateTime) {
+      case (id, oldDate, newDate) => math.min(oldDate, newDate.toInt )
+    }
+
+    if (testMode == 1) {
+      println("********** hjw test info **********")
+      println("*** There are " + IdUpdateTime.count() + " vertices counted.")
+      println(IdUpdateTime.collect.mkString("\n"))
+      IdUpdateTime.repartition(1).saveAsTextFile(outputDir + "/timeGraph/")
+      bb.vertices.repartition(1).saveAsTextFile(outputDir + "/timeGraph2/")
     }
 
     /*
@@ -237,12 +300,13 @@ object generateIdGraph {
    * This function is used to compute the time delay coefficient by a logarithm model
    * @param daysDiff: difference in days from now to last update time
    * @param T_half:   days when this coef reduces to 0.5
-   * @param T_total:  days when this coef redeces to 0
+   * @param T_total:  days when this coef reduces to 0
    * NOTE: in this model we should have
-   *        2 * T_half > T_total
+   *        0.5 * T_total < T_half < T_total
    */
   def timeDecayLog(daysDiff: Int, T_half: Int = 200, T_total: Int = 360): Double = {
-    if (daysDiff >= T_total) 0.0
+    if (daysDiff < 0) 0.5
+    else if (daysDiff >= T_total) 0.0
     else {
       val gamma : Double = (2 * T_half - T_total).toDouble / ((T_total - T_half) * (T_total - T_half)).toDouble
       //println("we calculate the gamma = " + gamma.toString)
@@ -254,6 +318,13 @@ object generateIdGraph {
   //TODO: define exponential time decay model
   def timeDecayExp(daysDiff : Int, T_half : Int, T_total : Int ): Double = {
     0.0
+  }
+
+  def deleteRecursively(file: File): Unit = {
+    if (file.isDirectory)
+      file.listFiles.foreach(deleteRecursively)
+    if (file.exists && !file.delete)
+      throw new Exception(s"Unable to delete ${file.getAbsolutePath}")
   }
 
 
