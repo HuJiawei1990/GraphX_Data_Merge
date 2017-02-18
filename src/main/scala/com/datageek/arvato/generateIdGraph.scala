@@ -167,8 +167,8 @@ object generateIdGraph {
       println("********** hjw test info **********")
       println("*** There are " + IdUpdateTime.count() + " vertices counted.")
       println(IdUpdateTime.collect.mkString("\n"))
-      IdUpdateTime.repartition(1).saveAsTextFile(outputDir + "/timeGraph/")
-      bb.vertices.repartition(1).saveAsTextFile(outputDir + "/timeGraph2/")
+      //IdUpdateTime.repartition(1).saveAsTextFile(outputDir + "/timeGraph/")
+      //bb.vertices.repartition(1).saveAsTextFile(outputDir + "/timeGraph2/")
     }
 
     /*
