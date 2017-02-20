@@ -41,8 +41,9 @@ object generateIdGraph {
     }
 
     // ============================================
-    // =========== Load graph from files ==========
-    //  Generate the ID connection Graphs
+    // =========== step 1
+    // =========== Load graph from files
+    // ===== Generate the ID connection Graphs
     // ============================================
 
     // ====== Graph node : all ID information
@@ -57,7 +58,8 @@ object generateIdGraph {
             fields(3), // ID type
             fields(4), // ID value
             //fields(5).toInt,
-            fields(6).toDouble * fields(7).toDouble), // ID weight
+            fields(6).toDouble *
+              ( 1 + math.log(1 + 1 / fields(7).toDouble) / math.log(2))), // ID weight
             0)   // days difference from now to last update time
         )
     }
@@ -123,6 +125,7 @@ object generateIdGraph {
     }
 
     // ==============================================
+    // =========== step 2
     // =========== Update the time information
     // ==============================================
 
@@ -138,7 +141,7 @@ object generateIdGraph {
         else vertex
     }
 
-    if (testMode == 1) {
+    if (testMode > 1) {
       println("********** hjw test info **********")
       println("*** There are " + IdUpdateTime.count() + " vertices counted.")
       println(IdUpdateTime.collect.mkString("\n"))
@@ -153,6 +156,8 @@ object generateIdGraph {
         // Send Message
         if (triplet.srcAttr < Int.MaxValue)
           triplet.sendToDst(triplet.srcAttr)
+        else if (triplet.dstAttr < Int.MaxValue)
+          triplet.sendToSrc(triplet.dstAttr)
       },
       (time1, time2) => math.min(time1, time2) // Merge Message
     )
@@ -174,7 +179,6 @@ object generateIdGraph {
     nonDirectedGraph = nonDirectedGraph.joinVertices(updateTimeGraph.vertices) {
       case (_, attr, updateTime) => (attr._1, updateTime)
     }
-
 
     /*
     // ====================================
@@ -209,7 +213,8 @@ object generateIdGraph {
     */
 
     // ===========================================
-    // ===== test shortest path algorithm
+    // ========== step 3
+    // ===== shortest path algorithm
     // ===== count the jump times between tables when join
     // ===========================================
 
@@ -249,6 +254,11 @@ object generateIdGraph {
       println(connectedVertices.collect.mkString("\n"))
     }
 
+    // ========================================
+    // ========== step 4
+    // ========== compute final weight
+    // ========================================
+
     // add the min sum of edge-weights as a new attribute into vertex.attr
     // filter all vertices whose new attribute < inf
     // it means these vertices are connected to the
@@ -258,6 +268,47 @@ object generateIdGraph {
       }.vertices.filter {
       case (_, attr) => attr._2 < Double.PositiveInfinity
     }
+
+
+    // ================================================
+    // =========== step 5
+    // =========== sum weights by edge type II
+    // =================================================
+
+    val defaultVertex = (("NULL", "NULL", 0.0), Double.PositiveInfinity)
+    var allInfoGraph = Graph(connectedVerticesAllInfo, IdPairs2, defaultVertex).subgraph(
+      vpred = (vid, attr) => attr._2 < Double.PositiveInfinity
+    )
+
+    allInfoGraph = Graph(allInfoGraph.vertices, allInfoGraph.reverse.edges.union(allInfoGraph.edges))
+
+    if (testMode == 1) {
+      println("**************** hjw test info ********************")
+      println(" *** The new graph created for ID vertex " + sourceId)
+      println(" *** there are " + allInfoGraph.numVertices + " vertices and " + allInfoGraph.numEdges + " Edges.")
+      println(allInfoGraph.vertices.collect().mkString("\n"))
+    }
+
+    //
+    val cntedVerticeWgt = allInfoGraph.mapVertices(
+      (vid, attr) => attr._1._3
+    ).aggregateMessages[Double](
+      triplet => {
+        triplet.sendToDst(triplet.srcAttr)
+      },
+      (oWeight, rWeight) => oWeight + rWeight
+    )
+
+    val cntedVerticesFinalInfo = allInfoGraph.outerJoinVertices(cntedVerticeWgt) {
+      case (_, attr, Some(fWgt)) => (attr._1._1, attr._1._2, attr._1._3 + fWgt)
+      case (_, attr, None) => (attr._1._1, attr._1._2, attr._1._3 )
+    }.vertices
+
+    if (testMode == 1){
+      cntedVerticesFinalInfo.repartition(1)
+        .sortBy(vertex => vertex._2._2).saveAsTextFile(outputDir + "/allInfo/")
+    }
+
 
     val aa = connectedVerticesAllInfo.map{
       case (_, attr) => ((attr._1._1, attr._1._2), attr._1._3)
@@ -273,7 +324,9 @@ object generateIdGraph {
       println(connectedVerticesAllInfo.collect.mkString("\n"))
 
       println("********** hjw debug info **********")
-      println(aa.collect.mkString("\n"))
+      println(aa.collect.sortBy(vertex => vertex._1._2).mkString("\n"))
+
+      println("********** hjw debug info **********")
       println(aaa.collect.mkString("\n"))
     }
 
