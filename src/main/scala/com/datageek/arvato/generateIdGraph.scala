@@ -302,13 +302,12 @@ object generateIdGraph {
     val cntedVerticesFinalInfo = allInfoGraph.outerJoinVertices(cntedVerticeWgt) {
       case (_, attr, Some(fWgt)) => (attr._1._1, attr._1._2, attr._1._3 + fWgt)
       case (_, attr, None) => (attr._1._1, attr._1._2, attr._1._3 )
-    }.vertices
+    }.vertices.map(vertex => vertex._2).distinct()
 
     if (testMode == 1){
       cntedVerticesFinalInfo.repartition(1)
-        .sortBy(vertex => vertex._2._2).saveAsTextFile(outputDir + "/allInfo/")
+        .sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/allInfo/")
     }
-
 
     val aa = connectedVerticesAllInfo.map{
       case (_, attr) => ((attr._1._1, attr._1._2), attr._1._3)
