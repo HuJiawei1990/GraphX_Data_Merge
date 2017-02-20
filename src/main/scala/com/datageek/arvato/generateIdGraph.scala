@@ -10,7 +10,6 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.graphx._
 import org.apache.spark.rdd.RDD
 import org.apache.commons.io.FileUtils
-import org.apache.commons.io.filefilter.WildcardFileFilter
 
 object generateIdGraph {
   Logger.getLogger("org").setLevel(Level.WARN)
@@ -27,10 +26,10 @@ object generateIdGraph {
     // define variables
     val sourceId: VertexId = 2L
     //val myIdType = "CUST_ID"
-    //val myIdType = "MOBILE"
-    val myIdType = "OPENID"
+    val myIdType = "MOBILE"
+    //val myIdType = "OPENID"
     //val myIdType = "EMAIL"
-    val alpha = 0.9 // this variable is defined as loss coefficient when table jump
+    //val alpha = 0.9 // this variable is defined as loss coefficient when table jump
 
     val outputDir = "./target/output/"
     FileUtils.deleteDirectory(new File(outputDir))
@@ -49,17 +48,17 @@ object generateIdGraph {
     // ====== Graph node : all ID information
     val allIdFile = "./src/test/data/allIdValues.csv"
     val allIdLine = sc.textFile(allIdFile)
-    val allId: RDD[(VertexId, (String, String, String, String, Double))] = allIdLine.map {
+    val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] = allIdLine.map {
       line =>
         val fields = line.split("\t")
         (fields(0).toLong, // vertex ID
-          (fields(1), // source table
+          ((fields(1), // source table
             fields(2), // ID name (column name)
             fields(3), // ID type
             fields(4), // ID value
             //fields(5).toInt,
-            fields(6).toDouble * fields(7).toDouble) // ID weight
-          //fields(5).toInt)   // days difference from now to last update time
+            fields(6).toDouble * fields(7).toDouble), // ID weight
+            0)   // days difference from now to last update time
         )
     }
 
@@ -72,7 +71,7 @@ object generateIdGraph {
     //val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0, -1)
 
     // ===== Graph edges
-    // ===== type 1: all ID from the same table
+    // ===== type I : all ID pairs from the same table
     val IdParisFile1 = "./src/test/data/associatedIdPairs.csv"
     val IdPairs1: RDD[Edge[Int]] = sc.textFile(IdParisFile1).map {
       line =>
@@ -83,11 +82,11 @@ object generateIdGraph {
         )
     }
 
-    // ===== type 2: all ID have the same value
+    // ===== type II: all ID pairs have the same value
     val IdParisFile2 = "./src/test/data/associatedKeyByValue.csv"
     val IdPairs2: RDD[Edge[Int]] = sc.textFile(IdParisFile2).map {
       line =>
-        val fields = line.split(",")
+        val fields = line.split("\t")
         Edge(fields(1).toLong, // source node ID
           fields(2).toLong, // destination node ID
           secondTypeEdgeWeight // relationship type => from the same table
@@ -107,16 +106,16 @@ object generateIdGraph {
     if (debugMode == 1) {
       println("********** hjw debug info **********")
       val details = graph.triplets.map(
-        triplet => triplet.srcAttr._2 + " from table " + triplet.srcAttr._1 + " with values " + triplet.srcAttr._4 +
+        triplet => triplet.srcAttr._1._2 + " from table " + triplet.srcAttr._1._1 + " with values " + triplet.srcAttr._1._4 +
           " is connected with " +
-          triplet.dstAttr._2 + " from table " + triplet.dstAttr._1 + " with values " + triplet.dstAttr._4 +
+          triplet.dstAttr._1._2 + " from table " + triplet.dstAttr._1._1 + " with values " + triplet.dstAttr._1._4 +
           " with type " + triplet.attr
       )
-      details.collect().map(println(_))
+      println(details.collect().mkString("\n"))
     }
 
     // create the non-directed graph by adding the reverse of the original graph
-    val nonDirectedGraph = Graph(graph.vertices, graph.edges.union(graph.reverse.edges))
+    var nonDirectedGraph = Graph(graph.vertices, graph.edges.union(graph.reverse.edges))
 
     if (testMode == 1) {
       println("********** hjw test info **********")
@@ -135,7 +134,7 @@ object generateIdGraph {
         )
     }.map{
       vertex =>
-        if (vertex._2 < 0)  (vertex._1, Int.MaxValue)
+        if (vertex._2 < 0)  (vertex._1, Int.MaxValue)   // change value -1 to Inf
         else vertex
     }
 
@@ -145,31 +144,37 @@ object generateIdGraph {
       println(IdUpdateTime.collect.mkString("\n"))
     }
 
-    val updateTimeGraph = Graph(IdUpdateTime, IdPairs2)
+    // generate a sub-graph for time computation
+    val TimeGraph = Graph(IdUpdateTime, IdPairs2)
 
-    IdUpdateTime = updateTimeGraph.aggregateMessages[Int](
+    // aggregate time message: by edge type II
+    IdUpdateTime = TimeGraph.aggregateMessages[Int](
       triplet => {
         // Send Message
-        if (triplet.srcAttr > 0)
+        if (triplet.srcAttr < Int.MaxValue)
           triplet.sendToDst(triplet.srcAttr)
-        if (triplet.dstAttr > 0)
-          triplet.sendToSrc(triplet.dstAttr)
-        //else triplet.sendToDst(Int.MaxValue)
       },
-      (a, b) => math.min(a, b) // Merge Message
+      (time1, time2) => math.min(time1, time2) // Merge Message
     )
 
-    val bb = updateTimeGraph.joinVertices(IdUpdateTime) {
-      case (id, oldDate, newDate) => math.min(oldDate, newDate.toInt )
+    // Update all vertices' update time to last information
+    val updateTimeGraph = TimeGraph.joinVertices(IdUpdateTime) {
+      case (_, oldDate, newDate) => math.min(oldDate, newDate.toInt )
     }
 
     if (testMode == 1) {
       println("********** hjw test info **********")
       println("*** There are " + IdUpdateTime.count() + " vertices counted.")
-      println(IdUpdateTime.collect.mkString("\n"))
+      //println(IdUpdateTime.collect.mkString("\n"))
       //IdUpdateTime.repartition(1).saveAsTextFile(outputDir + "/timeGraph/")
-      //bb.vertices.repartition(1).saveAsTextFile(outputDir + "/timeGraph2/")
+      updateTimeGraph.vertices.repartition(1).sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/timeGraph2/")
     }
+
+    // Add time information to the original graph
+    nonDirectedGraph = nonDirectedGraph.joinVertices(updateTimeGraph.vertices) {
+      case (_, attr, updateTime) => (attr._1, updateTime)
+    }
+
 
     /*
     // ====================================
@@ -224,7 +229,7 @@ object generateIdGraph {
     // if there is path link them
     // Otherwise, we store the sum as Double.positiveInfinity
     val shortestPathGraph = initialGraph.pregel(Double.PositiveInfinity)(
-      (id, dst, newDst) => math.min(dst, newDst),
+      (_, dst, newDst) => math.min(dst, newDst),
       triplet => {  // Send Message
         if (triplet.srcAttr + triplet.attr < triplet.dstAttr) {
           Iterator((triplet.dstId, triplet.srcAttr + triplet.attr))
@@ -236,7 +241,7 @@ object generateIdGraph {
 
     if (testMode > 1){
       val connectedVertices = shortestPathGraph.vertices.filter {
-        case (id, pathLength) => pathLength < Double.PositiveInfinity
+        case (_, pathLength) => pathLength < Double.PositiveInfinity
       }
 
       println("********** hjw test info **********")
@@ -248,18 +253,18 @@ object generateIdGraph {
     // filter all vertices whose new attribute < inf
     // it means these vertices are connected to the
     val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices) {
-        case (vid, attr, Some(pathLength)) => ((attr._1, attr._2, attr._3, attr._4, attr._5 * math.pow(alpha, pathLength)), pathLength)
-        case (vid, attr, None) => (attr, Double.PositiveInfinity)
+        case (_, attr, Some(pathLength)) => ((attr._1._3, attr._1._4, computeWeight(attr._1._5, pathLength, attr._2)), pathLength)
+        case (_, attr, None) => ((attr._1._3, attr._1._4, attr._1._5), Double.PositiveInfinity)
       }.vertices.filter {
       case (_, attr) => attr._2 < Double.PositiveInfinity
     }
 
     val aa = connectedVerticesAllInfo.map{
-      case (id, attr) => ((attr._1._3, attr._1._4), attr._1._5)
+      case (_, attr) => ((attr._1._1, attr._1._2), attr._1._3)
     }.reduceByKey(_ + _)
 
     val aaa = connectedVerticesAllInfo.map{
-      case (id, attr) => (attr._1._4, attr._1._5)
+      case (_, attr) => (attr._1._2, attr._1._3)
     }.reduceByKey(_ + _)
 
     if (testMode == 1){
@@ -276,7 +281,7 @@ object generateIdGraph {
     // ===== filter by ID type
     // =====================================
     val connectedVerticesType = connectedVerticesAllInfo.filter {
-        case (id, attr) => attr._1._3 == myIdType
+        case (_, attr) => attr._1._1 == myIdType
     }
 
     if (testMode == 1){
@@ -286,17 +291,17 @@ object generateIdGraph {
       println(connectedVerticesType.collect.mkString("\n"))
     }
 
-    val a = connectedVerticesType.map {
-      case (id, attr) => (attr._1._4, attr._1._5)
-    }.reduceByKey(_+_)
+    //val a = connectedVerticesType.map {
+    //  case (id, attr) => (attr._1._4, attr._1._5)
+    //}.reduceByKey(_+_)
 
-    if (testMode == 1) {
+    if (testMode > 1) {
       println("********** hjw test info **********")
-      println(a.collect.mkString("\n"))
+      println(aa.collect.mkString("\n"))
     }
   }
 
-  /*
+  /*
    * This function is used to compute the time delay coefficient by a logarithm model
    * @param daysDiff: difference in days from now to last update time
    * @param T_half:   days when this coef reduces to 0.5
@@ -304,8 +309,9 @@ object generateIdGraph {
    * NOTE: in this model we should have
    *        0.5 * T_total < T_half < T_total
    */
-  def timeDecayLog(daysDiff: Int, T_half: Int = 200, T_total: Int = 360): Double = {
-    if (daysDiff < 0) 0.5
+  def timeDecayLog(daysDiff: Int, T_half: Int = 200, T_total: Int = 360,
+                   defaultTimeDecay: Double = 0.5): Double = {
+    if (daysDiff < 0) defaultTimeDecay
     else if (daysDiff >= T_total) 0.0
     else {
       val gamma : Double = (2 * T_half - T_total).toDouble / ((T_total - T_half) * (T_total - T_half)).toDouble
@@ -320,13 +326,25 @@ object generateIdGraph {
     0.0
   }
 
+  /*
+   * Compute the final weight of vertices
+   *
+   */
+  def computeWeight(w1: Double, numJumps: Double, updateTime:Int,
+                    timeDecayModel: (Int, Int, Int, Double) => Double = timeDecayLog
+                   ): Double = {
+    val alpha = 0.9   // remain information when jumping between tables
+    w1 * math.pow(alpha, numJumps) * timeDecayModel(updateTime, 2000, 3600, 0.5)
+  }
+
+  /*
   def deleteRecursively(file: File): Unit = {
     if (file.isDirectory)
       file.listFiles.foreach(deleteRecursively)
     if (file.exists && !file.delete)
       throw new Exception(s"Unable to delete ${file.getAbsolutePath}")
   }
-
+  */
 
   /*
   def generateShortestPathGraph(srcGraph: Graph[VD, Int] , srcId: VertexId): Graph[VD, Int] = {
