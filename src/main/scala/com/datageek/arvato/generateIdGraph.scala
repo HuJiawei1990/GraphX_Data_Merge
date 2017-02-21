@@ -20,7 +20,7 @@ object generateIdGraph {
 
   def main(args: Array[String]) : Unit = {
     // spark initialization
-    val conf = new SparkConf().setAppName("generateTCUSTOMERId").setMaster("local")
+    val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
     val sc = new SparkContext(conf)
 
     // define variables
@@ -31,14 +31,10 @@ object generateIdGraph {
     //val myIdType = "EMAIL"
     //val alpha = 0.9 // this variable is defined as loss coefficient when table jump
 
+    // Define the output directory path
     val outputDir = "./target/output/"
     FileUtils.deleteDirectory(new File(outputDir))
     // define weights of different properties of ID
-
-    if (testMode > 1) {
-      println("********** hjw test info **********")
-      println("time decay model output " + timeDecayLog(100).toString)
-    }
 
     // ============================================
     // =========== step 1
@@ -46,9 +42,11 @@ object generateIdGraph {
     // ===== Generate the ID connection Graphs
     // ============================================
 
+    val dataDir = "./src/test/data/"
+
     // ====== Graph node : all ID information
-    val allIdFile = "./src/test/data/allIdValues.csv"
-    val allIdLine = sc.textFile(allIdFile)
+    val allIdFile = "allIdValues.csv"
+    val allIdLine = sc.textFile(dataDir + allIdFile)
     val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] = allIdLine.map {
       line =>
         val fields = line.split("\t")
@@ -74,8 +72,8 @@ object generateIdGraph {
 
     // ===== Graph edges
     // ===== type I : all ID pairs from the same table
-    val IdParisFile1 = "./src/test/data/associatedIdPairs.csv"
-    val IdPairs1: RDD[Edge[Int]] = sc.textFile(IdParisFile1).map {
+    val IdParisFile1 = "associatedIdPairs.csv"
+    val IdPairs1: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile1).map {
       line =>
         val fields = line.split(",")
         Edge(fields(1).toLong, // source node ID
@@ -85,8 +83,8 @@ object generateIdGraph {
     }
 
     // ===== type II: all ID pairs have the same value
-    val IdParisFile2 = "./src/test/data/associatedKeyByValue.csv"
-    val IdPairs2: RDD[Edge[Int]] = sc.textFile(IdParisFile2).map {
+    val IdParisFile2 = "associatedKeyByValue.csv"
+    val IdPairs2: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile2).map {
       line =>
         val fields = line.split("\t")
         Edge(fields(1).toLong, // source node ID
@@ -170,8 +168,6 @@ object generateIdGraph {
     if (testMode == 1) {
       println("********** hjw test info **********")
       println("*** There are " + IdUpdateTime.count() + " vertices counted.")
-      //println(IdUpdateTime.collect.mkString("\n"))
-      //IdUpdateTime.repartition(1).saveAsTextFile(outputDir + "/timeGraph/")
       updateTimeGraph.vertices.repartition(1).sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/timeGraph2/")
     }
 
@@ -277,7 +273,7 @@ object generateIdGraph {
 
     val defaultVertex = (("NULL", "NULL", 0.0), Double.PositiveInfinity)
     var allInfoGraph = Graph(connectedVerticesAllInfo, IdPairs2, defaultVertex).subgraph(
-      vpred = (vid, attr) => attr._2 < Double.PositiveInfinity
+      vpred = (_, attr) => attr._2 < Double.PositiveInfinity
     )
 
     allInfoGraph = Graph(allInfoGraph.vertices, allInfoGraph.reverse.edges.union(allInfoGraph.edges))
@@ -291,7 +287,7 @@ object generateIdGraph {
 
     //
     val cntedVerticeWgt = allInfoGraph.mapVertices(
-      (vid, attr) => attr._1._3
+      (_, attr) => attr._1._3
     ).aggregateMessages[Double](
       triplet => {
         triplet.sendToDst(triplet.srcAttr)
@@ -302,13 +298,18 @@ object generateIdGraph {
     val cntedVerticesFinalInfo = allInfoGraph.outerJoinVertices(cntedVerticeWgt) {
       case (_, attr, Some(fWgt)) => (attr._1._1, attr._1._2, attr._1._3 + fWgt)
       case (_, attr, None) => (attr._1._1, attr._1._2, attr._1._3 )
-    }.vertices.map(vertex => vertex._2).distinct()
+    }.vertices.map(vertex => vertex._2).map(
+      prop => ((prop._1, prop._2), prop._3)
+    ).reduceByKey((a,_) => a)
 
     if (testMode == 1){
       cntedVerticesFinalInfo.repartition(1)
         .sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/allInfo/")
     }
 
+
+
+    /*
     val aa = connectedVerticesAllInfo.map{
       case (_, attr) => ((attr._1._1, attr._1._2), attr._1._3)
     }.reduceByKey(_ + _)
@@ -351,6 +352,7 @@ object generateIdGraph {
       println("********** hjw test info **********")
       println(aa.collect.mkString("\n"))
     }
+    */
   }
 
   /*
@@ -373,7 +375,7 @@ object generateIdGraph {
     }
   }
 
-  //TODO: define exponential time decay model
+  // TODO: define exponential time decay model
   def timeDecayExp(daysDiff : Int, T_half : Int, T_total : Int ): Double = {
     0.0
   }
