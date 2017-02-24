@@ -20,8 +20,8 @@ object generateIdGraph {
         // spark initialization
         val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
-        val sqlContext = new SparkSession(sc)
-        //val sqlContext = new SQLContext(sc)
+        //val sqlContext = new SparkSession(sc)
+        val sqlContext = new SQLContext(sc)
         import sqlContext.implicits._
 
         // define variables
