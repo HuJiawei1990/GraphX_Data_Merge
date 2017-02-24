@@ -14,38 +14,30 @@ import org.apache.spark.sql.{Row, SQLContext, SparkSession}
 
 object generateIdGraph {
     Logger.getLogger("org").setLevel(Level.ERROR)
-    val testMode = 1
-    val debugMode = 0
-    val firstTypeEdgeWeight = 0
-    val secondTypeEdgeWeight = 1
+    val myInfoLevel = 1
 
     def main(args: Array[String]): Unit = {
         // spark initialization
         val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
-        val sqlContext = new SQLContext(sc)
+        val sqlContext = new SparkSession(sc)
+        //val sqlContext = new SQLContext(sc)
         import sqlContext.implicits._
 
         // define variables
         /**
           * prepares some variables for testing
           */
-        //val sourceId: VertexId = 2L
-        //val myIdType = "CUST_ID"
         val sourceType = "MOBILE"
-        //val myIdType = "MOBILE"
-        //val myIdType = "OPENID"
-        //val myIdType = "EMAIL"
-        //val alpha = 0.9 // this variable is defined as loss coefficient when table jump
+
+        val firstTypeEdgeWeight = 0         // weight for edge type I
+        val secondTypeEdgeWeight = 1        // weight for edge type II
 
         // Define the output directory path
         val outputDir = "./target/output/"
         FileUtils.deleteDirectory(new File(outputDir))
-        // define weights of different properties of ID
 
-
-        /**
-          * ********** step 1 **********
+        /** ********** step 1 **********
           * Load graph information from csv files
           * generate the ID connection graph
           */
@@ -62,21 +54,18 @@ object generateIdGraph {
                     fields(2), // ID name (column name)
                     fields(3), // ID type
                     fields(4), // ID value
-                    //fields(5).toInt,
                     fields(6).toDouble *
+                    //orderToWgt(fields(6).toInt) *
                       orderToWgt(fields(7).toInt)),
                       //(1 + math.log(1 + 1 / fields(7).toDouble) / math.log(2))), // ID weight
                     0) // days difference from now to last update time
                 )
         }
 
-        if (testMode >= 1) {
+        if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
             println("*** There are " + allId.count() + " nodes.")
         }
-
-        // define a default ID type
-        //val defaultId = ("NULL", "NULL", "NULL", "NULL", 0.0, -1)
 
         // ===== Graph edges
         // ===== type I : all ID pairs from the same table
@@ -101,7 +90,7 @@ object generateIdGraph {
                 )
         }
 
-        if (testMode >= 1) {
+        if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
             println("*** There are " + IdPairs1.count() + " connections of type 1.")
             println("*** There are " + IdPairs2.count() + " connections of type 2.")
@@ -111,7 +100,7 @@ object generateIdGraph {
         val graph = Graph(allId, IdPairs)
 
         // ====== output the whole graph
-        if (debugMode >= 1) {
+        if (myInfoLevel >= 2) {
             println("********** hjw debug info **********")
             val details = graph.triplets.map(
                 triplet => triplet.srcAttr._1._2 + " from table " + triplet.srcAttr._1._1 + " with values " + triplet.srcAttr._1._4 +
@@ -125,13 +114,12 @@ object generateIdGraph {
         // create the non-directed graph by adding the reverse of the original graph
         var nonDirectedGraph = Graph(graph.vertices, graph.edges.union(graph.reverse.edges))
 
-        if (testMode >= 1) {
+        if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
             println("*** There are " + nonDirectedGraph.edges.count() + " connections in final graph.")
         }
 
-        /**
-          * ********** step 2.A **********
+        /** ********** step 2.A **********
           * Update the time information
           */
 
@@ -148,7 +136,7 @@ object generateIdGraph {
                 else vertex
         }
 
-        if (testMode > 1) {
+        if (myInfoLevel > 1) {
             println("********** hjw test info **********")
             println("*** There are " + IdUpdateTime.count() + " vertices counted.")
             println(IdUpdateTime.collect.mkString("\n"))
@@ -174,7 +162,7 @@ object generateIdGraph {
             case (_, oldDate, newDate) => math.min(oldDate, newDate.toInt)
         }
 
-        if (testMode >= 1) {
+        if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
             println("*** There are " + IdUpdateTime.count() + " vertices counted.")
             updateTimeGraph.vertices.repartition(1).sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/timeGraph2/")
@@ -204,7 +192,7 @@ object generateIdGraph {
       => (triplet.dstId, triplet.dstAttr)
     }
 
-    if (testMode > 1) {
+    if (myInfoLevel > 1) {
       println("********** hjw debug info **********")
       println("*** all IDs connected with ID value = " + myIdValue)
       println("*** there are " + selectedVertices.count() + " neighbours.")
@@ -217,24 +205,19 @@ object generateIdGraph {
     }
     */
 
-
-        //var sourceId: Long = 0L
-
         //for (sourceId <- sourceIDList) {
-        /**
-          * For a given source Vertex,
+        /** For a given source Vertex,
           *     we run step 2.B, 2.C, 2.D to define all vertices' weight
           * @param sourceId : source vertex ID
-          * TODO: change name the fucntion
+          * TODO: change name of the fucntion
           */
         def hjwTest(sourceId: Long):Unit = {
-            /**
-              * ********** step 2.B **********
+            /** ********** step 2.B **********
               * shortest path algorithm
               * count the jump times from one table to another when joining them
               */
 
-            if (testMode >= 1) {
+            if (myInfoLevel >= 1) {
                 println("=========== hjw test info ===============")
                 println("Finding all connected vertices to Vertex No. " + sourceId.toString)
                 println("=========== hjw info end  ===============")
@@ -244,14 +227,13 @@ object generateIdGraph {
             // vertices has one attribute at beginning
             // for source Vertex ID => 0.0
             // for the others       => Inf
-            println("========= calculating for vertex No." + sourceId.toString)
             val initialGraph = nonDirectedGraph.mapVertices(
                 (id, _) =>
                     if (id == sourceId) 0.0
                     else Double.PositiveInfinity
             )
 
-            /** find the shortest path
+            /** Find the shortest path from source vertex to the other vertices
               * we can define the weight for different edge types
               * we store the min sum of edge-weights from the source vertex to destination vertex
               * if there is path link them
@@ -270,7 +252,7 @@ object generateIdGraph {
                 (a, b) => math.min(a, b) // Merge Message
             )
 
-            if (testMode > 1) {
+            if (myInfoLevel > 1) {
                 val connectedVertices = shortestPathGraph.vertices.filter {
                     case (_, pathLength) => pathLength < Double.PositiveInfinity
                 }
@@ -280,18 +262,17 @@ object generateIdGraph {
                 println(connectedVertices.collect.mkString("\n"))
             }
 
-            /**
-              * ********** step 2.C **********
+            /** ********** step 2.C **********
               * compute final weight for each vertex
               */
 
             /**  add the min sum of edge-weights as a new attribute into vertex.attr
               *  filter all vertices whose new attribute < inf
-              *  it means these vertices are connected to the
+              *  i.e. these vertices are connected to the source vertex
               */
             val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices) {
                 case (_, attr, Some(pathLength)) => ((attr._1._3, attr._1._4,
-                  computeWeight(attr._1._5, pathLength, attr._2, T_half = 2500, T_total = 3600)), pathLength)
+                  computeWeight(attr._1._5, pathLength, attr._2, T_half = 2500, T_total = 3600, alpha = 0.88)), pathLength)
                 case (_, attr, None) => ((attr._1._3, attr._1._4, attr._1._5), Double.PositiveInfinity)
             }.vertices.filter {
                 case (_, attr) => attr._2 < Double.PositiveInfinity
@@ -313,7 +294,7 @@ object generateIdGraph {
 
             allInfoGraph = Graph(allInfoGraph.vertices, allInfoGraph.reverse.edges.union(allInfoGraph.edges))
 
-            if (testMode > 1) {
+            if (myInfoLevel > 1) {
                 println("**************** hjw test info ********************")
                 println(" *** The new graph created for ID vertex " + sourceId)
                 println(" *** there are " + allInfoGraph.numVertices + " vertices and " + allInfoGraph.numEdges + " Edges.")
@@ -335,16 +316,17 @@ object generateIdGraph {
                 case (_, attr, None) => attr._1
             }.vertices.map(vertex => vertex._2).map(
                 prop => ((prop._1, prop._2), prop._3)
-            ).reduceByKey((a, _) => a)
+            ).reduceByKey((a, _) => a).map(
+                attr => (attr._1._1, attr._1._2, attr._2)
+            )
 
-            if (testMode > 0) {
+            if (myInfoLevel > 0) {
                 cntedVerticesFinalInfo.repartition(1)
                   .sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
             }
         }
 
-        /**
-          * ********** step 3 **********
+        /** ********** step 3 **********
           * Get all Id vertices whose type == source ID type.
           * Generate a list and find all information of
           * vertices connected to source vertex.
@@ -372,7 +354,7 @@ object generateIdGraph {
       case (_, attr) => (attr._1._2, attr._1._3)
     }.reduceByKey(_ + _)
 
-    if (testMode > 0){
+    if (myInfoLevel > 0){
       println("********** hjw debug info **********")
       println("*** There are " + connectedVerticesAllInfo .count() + " vertices connected to vertex ID = " + sourceId)
       println(connectedVerticesAllInfo.collect.mkString("\n"))
@@ -391,7 +373,7 @@ object generateIdGraph {
         case (_, attr) => attr._1._1 == myIdType
     }
 
-    if (testMode > 0){
+    if (myInfoLevel > 0){
       println("********** hjw test info **********")
       println("*** There are " + connectedVerticesType .count() + " vertices connected to vertex ID = "
         + sourceId + " with type " + myIdType )
@@ -402,11 +384,13 @@ object generateIdGraph {
     //  case (id, attr) => (attr._1._4, attr._1._5)
     //}.reduceByKey(_+_)
 
-    if (testMode > 1) {
+    if (myInfoLevel > 1) {
       println("********** hjw test info **********")
       println(aa.collect.mkString("\n"))
     }
     */
+
+        sc.stop()
     }
 
     /**
@@ -414,11 +398,11 @@ object generateIdGraph {
       * deal with the ID's order and source Tables' order
       * @param order        order number
       * @param maxOrder     the maximum order(only served for descendant mode),
-      *                    default = 10;
+      *             default = 10;
       * @param isAscendent
-      *                    true(default):   order is smaller => more important
-      *                    false:           order is larger => more important
-      * @return     the weight value based on order, the value is between 0 and 1
+      *             true(default):   order No. is small => more important
+      *             false:           order No. is large => more important
+      * @return    the weight value based on order, the value is between 0 and 1
       */
     def orderToWgt(order: Int, maxOrder:Int = 10, isAscendent: Boolean = true): Double = {
         if (isAscendent) (1 + math.log(1 + 1 / order.toDouble) / math.log(2)) / 2.0

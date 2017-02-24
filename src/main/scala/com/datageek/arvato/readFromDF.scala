@@ -85,9 +85,10 @@ object readFromDF {
                 row.get(5).toString.toInt))
                 })
 
-           // println(allId.sortBy(vertex => vertex._1).collect.mkString("\n"))
+            // println(allId.sortBy(vertex => vertex._1).collect.mkString("\n"))
             // val aa = allIdDf2.map(line => line(0),line(1))
 
+            allId.repartition(1).saveAsTextFile("./target/data/")
 
             sc.stop()
 
