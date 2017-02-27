@@ -6,11 +6,11 @@ package com.datageek.arvato
 import java.io.File
 
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.graphx._
-import org.apache.spark.rdd.RDD
 import org.apache.commons.io.FileUtils
 import org.apache.spark.sql.{Row, SQLContext, SparkSession}
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.rdd.RDD
 
 object generateIdGraph {
     Logger.getLogger("org").setLevel(Level.ERROR)
@@ -20,7 +20,6 @@ object generateIdGraph {
         // spark initialization
         val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
-        //val sqlContext = new SparkSession(sc)
         val sqlContext = new SQLContext(sc)
         import sqlContext.implicits._
 
@@ -324,6 +323,8 @@ object generateIdGraph {
                 cntedVerticesFinalInfo.repartition(1)
                   .sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
             }
+
+            // TODO: insert the result cntedVerticesFinalInfo into table T_merge (HBase)
         }
 
         /** ********** step 3 **********
@@ -341,8 +342,7 @@ object generateIdGraph {
 
         // Run iterations
         // TODO: change name of function hjwTest
-        var i: Int = 0
-        for (i <- sourceIDList) hjwTest(i)
+        for (vid <- sourceIDList) hjwTest(vid)
 
 
         /*
