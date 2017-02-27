@@ -206,9 +206,9 @@ object generateIdGraph {
 
         //for (sourceId <- sourceIDList) {
         /** For a given source Vertex,
-          *     we run step 2.B, 2.C, 2.D to define all vertices' weight
+          *     we run step 2.B + 2.C + 2.D to define all vertices' weight
           * @param sourceId : source vertex ID
-          * TODO: change name of the fucntion
+          * TODO: change the name of function
           */
         def hjwTest(sourceId: Long):Unit = {
             /** ********** step 2.B **********
@@ -340,7 +340,7 @@ object generateIdGraph {
         val numSrcId = diffValues.count().toInt
         val sourceIDList:Array[Long] = diffValues.take(numSrcId)
 
-        // Run iterations
+        // Run iterations for all possible source vertex IDs
         // TODO: change name of function hjwTest
         for (vid <- sourceIDList) hjwTest(vid)
 
@@ -440,7 +440,6 @@ object generateIdGraph {
     }
 
 
-    // TODO: define exponential time decay model
     /**
       * This function is used to compute the time delay coefficient by a exponential model
       * @param daysDiff: difference in days from now to last update time
@@ -457,8 +456,11 @@ object generateIdGraph {
       */
     def timeDecayExp(daysDiff: Int, T_half: Int = 100 , T_total: Int = 360, defaultTimeCoef: Double = 0.5): Double = {
         if (daysDiff == Int.MaxValue || daysDiff < 0) defaultTimeCoef
-        else if (daysDiff < 0.5 * T_half) defaultTimeCoef
-        else 0.5
+        else if (daysDiff < 0.5 * T_half) 1.0
+        else {
+            val alpha =  1 / math.pow(2, 2 / T_half)
+            math.pow(alpha, daysDiff)
+        }
     }
 
 
