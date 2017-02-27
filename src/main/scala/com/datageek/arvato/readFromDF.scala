@@ -1,7 +1,7 @@
 package com.datageek.arvato
 
 /**
-  * Created by Administrator on 2017/2/21.
+  * Created by hjw on 2017/2/21.
   */
 
 import java.io.File
@@ -10,7 +10,7 @@ import org.apache.log4j.{Level, Logger}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.graphx._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{SQLContext, Row}
+import org.apache.spark.sql.SQLContext
 
 import org.apache.commons.io.FileUtils
 
@@ -26,6 +26,7 @@ object readFromDF {
         import sqlContext.implicits._
 
         val dataDir = "./src/test/data/"
+        FileUtils.deleteDirectory(new File(dataDir))
 
         // ====== Graph node : all ID information
         val allIdFile = "allIdValues.csv"
@@ -74,15 +75,15 @@ object readFromDF {
 
 
             // Convert data frame into vertex rdd
-            val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] =
+            val allId: RDD[(VertexId, String, String, String, String, Double, Int)] =
                 allIdDf2.rdd.map({ row => (row.get(0).toString.toLong,
-                  ((row.get(1).toString,
+                  row.get(1).toString,
                   row.get(2).toString,
                   row.get(3).toString,
                   row.get(4).toString,
                   row.get(7).toString.toDouble *
-                    ( 1 + math.log(1 + 1 / row.get(9).toString.toDouble) / math.log(2))), // ID weight
-                row.get(5).toString.toInt))
+                    ( 1 + math.log(1 + 1 / row.get(9).toString.toDouble) / math.log(2)), // ID weight
+                row.get(5).toString.toInt)
                 })
 
             // println(allId.sortBy(vertex => vertex._1).collect.mkString("\n"))

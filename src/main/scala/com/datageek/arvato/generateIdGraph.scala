@@ -8,7 +8,7 @@ import java.io.File
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.graphx._
 import org.apache.commons.io.FileUtils
-import org.apache.spark.sql.{Row, SQLContext, SparkSession}
+import org.apache.spark.sql.SQLContext
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
 
@@ -21,13 +21,12 @@ object generateIdGraph {
         val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
         val sqlContext = new SQLContext(sc)
-        import sqlContext.implicits._
 
         // define variables
         /**
           * prepares some variables for testing
           */
-        val sourceType = "MOBILE"
+        val sourceType = "CUST_ID"
 
         val firstTypeEdgeWeight = 0         // weight for edge type I
         val secondTypeEdgeWeight = 1        // weight for edge type II
@@ -36,6 +35,8 @@ object generateIdGraph {
         val outputDir = "./target/output/"
         FileUtils.deleteDirectory(new File(outputDir))
 
+
+        //readFromDF.main(Array("sss"))
         /** ********** step 1 **********
           * Load graph information from csv files
           * generate the ID connection graph
@@ -271,7 +272,7 @@ object generateIdGraph {
               */
             val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices) {
                 case (_, attr, Some(pathLength)) => ((attr._1._3, attr._1._4,
-                  computeWeight(attr._1._5, pathLength, attr._2, T_half = 2500, T_total = 3600, alpha = 0.88)), pathLength)
+                  computeWeight(attr._1._5, pathLength, attr._2, timeDecayModel = "sig" ,T_quad = 1000, T_half = 1800)), pathLength)
                 case (_, attr, None) => ((attr._1._3, attr._1._4, attr._1._5), Double.PositiveInfinity)
             }.vertices.filter {
                 case (_, attr) => attr._2 < Double.PositiveInfinity
@@ -335,7 +336,7 @@ object generateIdGraph {
           */
         val diffValues = allId.filter(vertex => vertex._2._1._3 == sourceType)
           .map(vertex => (vertex._2._1._4, vertex._1))
-          .reduceByKey((a,b) => a).map(_._2)
+          .reduceByKey((a, _) => a).map(_._2)
 
         val numSrcId = diffValues.count().toInt
         val sourceIDList:Array[Long] = diffValues.take(numSrcId)
@@ -486,7 +487,7 @@ object generateIdGraph {
     }
 
     /**
-      * Compute the final weight coefficent of ID
+      * Compute the final weight coefficient of ID
       * @param w1            basic weight of ID which defined by source table and ID type
       * @param numJumps     number of jumps between different tables from source ID to the destination
       * @param updateTime   number of days from the latest update time to now
