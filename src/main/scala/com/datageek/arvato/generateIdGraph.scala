@@ -463,6 +463,27 @@ object generateIdGraph {
         }
     }
 
+    /**
+      * This function is used to compute the time delay coefficient by a sigmoid model
+      * @param daysDiff: difference in days from now to last update time
+      * @param T_quad:   days when this coef reduces to 0.75
+      *               default = 100;
+      * @param T_half:  days when this coef reduces to 0.5
+      *               default = 180
+      * @param defaultTimeCoef: the default coefficient when the information is missing
+      *               default = 0.5;
+      * @return
+      *         time decay coefficient between 0 and 1
+      * @note
+      *       In this model we should make sure that
+      */
+    def timeDecaySig(daysDiff: Int, T_quad: Int = 100 , T_half: Int = 180, defaultTimeCoef: Double = 0.5): Double = {
+        if (daysDiff == Int.MaxValue || daysDiff < 0) defaultTimeCoef
+        else {
+            val alpha = math.log1p(3) / (T_half - T_quad)
+            1 - 1 / (1 + math.exp( - (daysDiff - T_half) * alpha) )
+        }
+    }
 
     /**
       * Compute the final weight coefficent of ID
@@ -474,6 +495,9 @@ object generateIdGraph {
       * @param timeDecayModel   choose a model to calculate time decay coefficient
       *           "log"(default):   logarithm model
       *           "exp":            exponential model
+      *           "sig":            sigmoid function model
+      * @param T_quad       days when time decay coefficient reduces to 0.75
+      *           default = 100, used by sifmoid model;
       * @param T_half       days when time decay coefficient reduces to 0.5
       *           default = 200;
       * @param T_total      days when time decay coefficient reduces to 0
@@ -482,9 +506,11 @@ object generateIdGraph {
       *            default = 0.5;
       * @return
       *            the final weight to the vertex, result keep 4 decimals
+      * @note
+      *       Be careful with the "sig" model, its parameters are different from the others
       */
     def computeWeight(w1: Double, numJumps: Double, updateTime: Int, alpha: Double = 0.9,
-                      timeDecayModel: String = "log",
+                      timeDecayModel: String = "log", T_quad: Int = 100,
                       T_half: Int = 200, T_total:Int = 360, defaultTimeCoef:Double = 0.5
                      ): Double = {
         //val alpha = 0.9
@@ -492,7 +518,8 @@ object generateIdGraph {
         val timeCoef = timeDecayModel match {
             case "log" => timeDecayLog(updateTime, T_half, T_total, defaultTimeCoef)
             case "exp" => timeDecayExp(updateTime, T_half, T_total, defaultTimeCoef)
-            case _ => defaultTimeCoef
+            case "sig" => timeDecaySig(updateTime, T_quad, T_half, defaultTimeCoef)
+            case _ => 1.0
         }
 
         val result = w1 * math.pow(alpha, numJumps) * timeCoef
