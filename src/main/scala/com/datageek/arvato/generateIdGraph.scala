@@ -4,6 +4,7 @@ package com.datageek.arvato
   * Created by Administrator on 2017/2/10.
   */
 import java.io.File
+import java.time.LocalTime
 
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.graphx._
@@ -36,7 +37,6 @@ object generateIdGraph {
         FileUtils.deleteDirectory(new File(outputDir))
 
 
-        //readFromDF.main(Array("sss"))
         /** ********** step 1 **********
           * Load graph information from csv files
           * generate the ID connection graph
@@ -56,8 +56,7 @@ object generateIdGraph {
                     fields(4), // ID value
                     fields(6).toDouble *
                     //orderToWgt(fields(6).toInt) *
-                      orderToWgt(fields(7).toInt)),
-                      //(1 + math.log(1 + 1 / fields(7).toDouble) / math.log(2))), // ID weight
+                      orderToWgt(fields(7).toInt, isAscending = true)),
                     0) // days difference from now to last update time
                 )
         }
@@ -73,9 +72,9 @@ object generateIdGraph {
         val IdPairs1: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile1).map {
             line =>
                 val fields = line.split(",")
-                Edge(fields(1).toLong, // source node ID
-                    fields(2).toLong, // destination node ID
-                    firstTypeEdgeWeight // relationship type => from the same table
+                Edge(fields(1).toLong,      // source node ID
+                    fields(2).toLong,       // destination node ID
+                    firstTypeEdgeWeight     // relationship type => from the same table
                 )
         }
 
@@ -84,22 +83,22 @@ object generateIdGraph {
         val IdPairs2: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile2).map {
             line =>
                 val fields = line.split("\t")
-                Edge(fields(1).toLong, // source node ID
-                    fields(2).toLong, // destination node ID
-                    secondTypeEdgeWeight // relationship type => from the same table
+                Edge( fields(1).toLong,      // source node ID
+                    fields(2).toLong,       // destination node ID
+                    secondTypeEdgeWeight    // relationship type => from the same table
                 )
         }
 
         if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
-            println("*** There are " + IdPairs1.count() + " connections of type 1.")
-            println("*** There are " + IdPairs2.count() + " connections of type 2.")
+            println("*** There are " + IdPairs1.count() + " connections of type I.")
+            println("*** There are " + IdPairs2.count() + " connections of type II.")
         }
 
         val IdPairs = IdPairs1.union(IdPairs2)
         val graph = Graph(allId, IdPairs)
 
-        // ====== output the whole graph
+        // ====== print out the whole graph
         if (myInfoLevel >= 2) {
             println("********** hjw debug info **********")
             val details = graph.triplets.map(
@@ -111,7 +110,7 @@ object generateIdGraph {
             println(details.collect().mkString("\n"))
         }
 
-        // create the non-directed graph by adding the reverse of the original graph
+        // create a undirected graph by adding the reverse of the original graph
         var nonDirectedGraph = Graph(graph.vertices, graph.edges.union(graph.reverse.edges))
 
         if (myInfoLevel >= 1) {
@@ -130,8 +129,7 @@ object generateIdGraph {
                 (fields(0).toLong, // vertex ID
                   fields(5).toInt // days difference from now to last update time
                 )
-        }.map {
-            vertex =>
+        }.map { vertex =>
                 if (vertex._2 < 0) (vertex._1, Int.MaxValue) // change value -1 to Inf
                 else vertex
         }
@@ -154,7 +152,7 @@ object generateIdGraph {
                 else if (triplet.dstAttr < Int.MaxValue)
                     triplet.sendToSrc(triplet.dstAttr)
             },
-            (time1, time2) => math.min(time1, time2) // Merge Message
+            (time1, time2) => math.min(time1, time2)    // Merge Message
         )
 
         // Update all vertices' update time to last information
@@ -211,17 +209,13 @@ object generateIdGraph {
           * @param sourceId : source vertex ID
           * TODO: change the name of function
           */
-        def hjwTest(sourceId: Long):Unit = {
+        def hjwTest(sourceId: Long): Unit = {
             /** ********** step 2.B **********
               * shortest path algorithm
               * count the jump times from one table to another when joining them
               */
 
-            if (myInfoLevel >= 1) {
-                println("=========== hjw test info ===============")
-                println("Finding all connected vertices to Vertex No. " + sourceId.toString)
-                println("=========== hjw info end  ===============")
-            }
+            val startTime = LocalTime.now()
 
             // Define a initial graph which has the same structure with the original graph
             // vertices has one attribute at beginning
@@ -302,7 +296,7 @@ object generateIdGraph {
             }
 
             // Gathering message from all its neighbours (for edge type II)
-            val cntedVerticeWgt = allInfoGraph.mapVertices(
+            val cntedVerticesWgt = allInfoGraph.mapVertices(
                 (_, attr) => attr._1._3
             ).aggregateMessages[Double](
                 triplet => triplet.sendToDst(triplet.srcAttr),
@@ -311,21 +305,31 @@ object generateIdGraph {
 
             // aggregate message : original message + all received message
             // and get only the first value to avoid duplicating information
-            val cntedVerticesFinalInfo = allInfoGraph.outerJoinVertices(cntedVerticeWgt) {
+            val cntedVerticesFinalInfo = allInfoGraph.outerJoinVertices(cntedVerticesWgt) {
                 case (_, attr, Some(fWgt)) => (attr._1._1, attr._1._2, attr._1._3 + fWgt)
                 case (_, attr, None) => attr._1
             }.vertices.map(vertex => vertex._2).map(
                 prop => ((prop._1, prop._2), prop._3)
             ).reduceByKey((a, _) => a).map(
                 attr => (attr._1._1, attr._1._2, attr._2)
-            )
+            ).sortBy(vertex => (vertex._1, vertex._3), ascending = false)
 
             if (myInfoLevel > 0) {
                 cntedVerticesFinalInfo.repartition(1)
-                  .sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
+                  .saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
             }
 
             // TODO: insert the result cntedVerticesFinalInfo into table T_merge (HBase)
+
+            val endTime = LocalTime.now()
+            val runTime = endTime.toNanoOfDay() - startTime.toNanoOfDay()
+
+            if (myInfoLevel > 0){
+                println("=========== hjw test info ==========")
+                println("Finding all connected vertices to Vertex No. " + sourceId.toString)
+                println("Run time: " + runTime / math.pow(10, 6) + " ms.")
+                println("=========== hjw info end  ===============")
+            }
         }
 
         /** ********** step 3 **********
@@ -345,52 +349,6 @@ object generateIdGraph {
         // TODO: change name of function hjwTest
         for (vid <- sourceIDList) hjwTest(vid)
 
-
-        /*
-    val aa = connectedVerticesAllInfo.map{
-      case (_, attr) => ((attr._1._1, attr._1._2), attr._1._3)
-    }.reduceByKey(_ + _)
-
-    val aaa = connectedVerticesAllInfo.map{
-      case (_, attr) => (attr._1._2, attr._1._3)
-    }.reduceByKey(_ + _)
-
-    if (myInfoLevel > 0){
-      println("********** hjw debug info **********")
-      println("*** There are " + connectedVerticesAllInfo .count() + " vertices connected to vertex ID = " + sourceId)
-      println(connectedVerticesAllInfo.collect.mkString("\n"))
-
-      println("********** hjw debug info **********")
-      println(aa.collect.sortBy(vertex => vertex._1._2).mkString("\n"))
-
-      println("********** hjw debug info **********")
-      println(aaa.collect.mkString("\n"))
-    }
-
-    // =====================================
-    // ===== filter by ID type
-    // =====================================
-    val connectedVerticesType = connectedVerticesAllInfo.filter {
-        case (_, attr) => attr._1._1 == myIdType
-    }
-
-    if (myInfoLevel > 0){
-      println("********** hjw test info **********")
-      println("*** There are " + connectedVerticesType .count() + " vertices connected to vertex ID = "
-        + sourceId + " with type " + myIdType )
-      println(connectedVerticesType.collect.mkString("\n"))
-    }
-
-    //val a = connectedVerticesType.map {
-    //  case (id, attr) => (attr._1._4, attr._1._5)
-    //}.reduceByKey(_+_)
-
-    if (myInfoLevel > 1) {
-      println("********** hjw test info **********")
-      println(aa.collect.mkString("\n"))
-    }
-    */
-
         sc.stop()
     }
 
@@ -400,13 +358,13 @@ object generateIdGraph {
       * @param order        order number
       * @param maxOrder     the maximum order(only served for descendant mode),
       *             default = 10;
-      * @param isAscendent
+      * @param isAscending
       *             true(default):   order No. is small => more important
       *             false:           order No. is large => more important
       * @return    the weight value based on order, the value is between 0 and 1
       */
-    def orderToWgt(order: Int, maxOrder:Int = 10, isAscendent: Boolean = true): Double = {
-        if (isAscendent) (1 + math.log(1 + 1 / order.toDouble) / math.log(2)) / 2.0
+    def orderToWgt(order: Int, maxOrder:Int = 10, isAscending: Boolean = true): Double = {
+        if (isAscending) (1 + math.log(1 + 1 / order.toDouble) / math.log(2)) / 2.0
         else {
             (1 + math.log(1 + 1 / (maxOrder - order + 1).toDouble) / math.log(2)) / 2.0
         }
@@ -522,51 +480,50 @@ object generateIdGraph {
             case "sig" => timeDecaySig(updateTime, T_quad, T_half, defaultTimeCoef)
             case _ => 1.0
         }
-
         val result = w1 * math.pow(alpha, numJumps) * timeCoef
         // keep 4 decimals
         (result * 10000).toInt / 10000.0
     }
 
 
-    /*
-  def deleteRecursively(file: File): Unit = {
-    if (file.isDirectory)
-      file.listFiles.foreach(deleteRecursively)
-    if (file.exists && !file.delete)
-      throw new Exception(s"Unable to delete ${file.getAbsolutePath}")
-  }
-  */
 
-    /*
-  def generateShortestPathGraph(srcGraph: Graph[VD, Int] , srcId: VertexId): Graph[VD, Int] = {
-    val initialGraph = srcGraph.mapVertices(
-      (id, _) =>
-        if (id == srcId) 0.0
-        else Double.PositiveInfinity
-    )
 
-    val shortestPathGraph = initialGraph.pregel(Double.PositiveInfinity)(
-      (id, dst, newDst) => math.min(dst, newDst),
-        triplet => {  // Send Message
-          if (triplet.srcAttr + triplet.attr < triplet.dstAttr) {
-            Iterator((triplet.dstId, triplet.srcAttr + triplet.attr))
-          } else {
-          Iterator.empty
-          }
-        },
-      (a, b) => math.min(a, b) // Merge Message
-    )
+//  def deleteRecursively(file: File): Unit = {
+//    if (file.isDirectory)
+//      file.listFiles.foreach(deleteRecursively)
+//    if (file.exists && !file.delete)
+//      throw new Exception(s"Unable to delete ${file.getAbsolutePath}")
+//  }
 
-    // join the path length param to the source graph
-    // add the path length as a new attribute into all vertices
-    srcGraph.outerJoinVertices(shortestPathGraph.vertices){
-      case (vid, attr, Some(pathLength)) => (attr, pathLength)
-    }.vertices.filter {
-      case (_, attr) => attr._2 < Double.PositiveInfinity
-    }
-  }
-  */
+
+//  def generateShortestPathGraph(srcGraph: Graph[VD, Int] , srcId: VertexId): Graph[VD, Int] = {
+ //   val initialGraph = srcGraph.mapVertices(
+ //     (id, _) =>
+ //       if (id == srcId) 0.0
+ //       else Double.PositiveInfinity
+ //   )
+
+//      val shortestPathGraph = initialGraph.pregel(Double.PositiveInfinity)(
+//          (id, dst, newDst) => math.min(dst, newDst),
+//          triplet => {  // Send Message
+//              if (triplet.srcAttr + triplet.attr < triplet.dstAttr) {
+//                  Iterator((triplet.dstId, triplet.srcAttr + triplet.attr))
+//              } else {
+//                  Iterator.empty
+//              }
+//          },
+//          (a, b) => math.min(a, b) // Merge Message
+//      )
+//
+//      // join the path length param to the source graph
+//      // add the path length as a new attribute into all vertices
+//      srcGraph.outerJoinVertices(shortestPathGraph.vertices){
+//          case (vid, attr, Some(pathLength)) => (attr, pathLength)
+//      }.vertices.filter {
+//          case (_, attr) => attr._2 < Double.PositiveInfinity
+//      }
+//  }
+
 }
 
 
