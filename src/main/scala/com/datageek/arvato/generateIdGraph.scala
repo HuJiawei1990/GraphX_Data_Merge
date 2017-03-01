@@ -208,7 +208,7 @@ object generateIdGraph {
             case (_, oldDate, newDate) => math.min(oldDate, newDate.toInt)
         }
 
-        if (myInfoLevel >= 1) {
+        if (myInfoLevel > 1) {
             println("********** hjw test info **********")
             println("*** There are " + IdUpdateTime.count() + " vertices counted.")
             updateTimeGraph.vertices.repartition(1).sortBy(vertex => vertex._1).saveAsTextFile(outputDir + "/timeGraph2/")
@@ -264,6 +264,8 @@ object generateIdGraph {
               */
 
             val startTime = LocalTime.now()
+
+            val sourceIdValue: String = allId.filter(_._1 == sourceId).map(_._2._1._4).take(1)(0)
 
             // Define a initial graph which has the same structure with the original graph
             // vertices has one attribute at beginning
@@ -331,7 +333,7 @@ object generateIdGraph {
             // and type II edges which connect these vertices
             val defaultVertex = (("NULL", "NULL", 0.0), Double.PositiveInfinity)
             var allInfoGraph = Graph(connectedVerticesAllInfo, IdPairs2, defaultVertex).subgraph(
-                vpred = (_, attr) => attr._2 < Double.PositiveInfinity
+                vpred = (_, attr) => (attr._2 < Double.PositiveInfinity) && (attr._1._1 != sourceType)
             )
 
             allInfoGraph = Graph(allInfoGraph.vertices, allInfoGraph.reverse.edges.union(allInfoGraph.edges))
@@ -375,6 +377,7 @@ object generateIdGraph {
             if (myInfoLevel > 0){
                 println("=========== hjw test info ==========")
                 println("Finding all connected vertices to Vertex No. " + sourceId.toString)
+                println(" *** " + sourceType + "=" + sourceIdValue + " ***")
                 println("Run time: " + runTime / math.pow(10, 6) + " ms.")
                 println("=========== hjw info end  ===============")
             }
