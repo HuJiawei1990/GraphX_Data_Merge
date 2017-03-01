@@ -26,15 +26,9 @@ object readFromDF {
         import sqlContext.implicits._
 
         val dataDir = "./src/test/data/"
-        FileUtils.deleteDirectory(new File(dataDir))
+        FileUtils.deleteDirectory(new File("./target/data/"))
 
         // ====== Graph node : all ID information
-        val allIdFile = "allIdValues.csv"
-        val allIdLine = sc.textFile(dataDir + allIdFile)
-        //        val allIdValues = sc.textFile(dataDir + allIdFile).map {
-        //          line => val fields = line.split("\t")
-        //            fields.
-        //  }
 
         if (sqlConnect == 1) {
             val allIdValuesDF = sqlContext.table("allIDValues")
@@ -44,6 +38,8 @@ object readFromDF {
             val allIdDf1 = allIdValuesDF.join(srcTableListDF, allIdValuesDF("TableName") === srcTableListDF("tb_name"), "left_outer")
             val allIdDf2 = allIdDf1.join(idNameListDF, allIdDf1("IDName") === idNameListDF("ID_Type"), "left_outer")
         } else {
+            val allIdFile = "allIdValues_o.csv"
+            val allIdLine = sc.textFile(dataDir + allIdFile)
             val allIdDF = allIdLine.map(line => line.split("\t"))
               .map { fields =>
                   (fields(0).toLong, // vertex Id
@@ -67,41 +63,31 @@ object readFromDF {
               map{
                   fields => (fields(0), fields(1))
               }.toDF()
-            idNameListDF.show()
+            //idNameListDF.show()
 
             // JOIN the three Data Frame
             val allIdDf1 = allIdDF.join(srcTableListDF, allIdDF("_2") === srcTableListDF("_1"), "left_outer")
             val allIdDf2 = allIdDf1.join(idNameListDF, allIdDf1("_4") === idNameListDF("_1"), "left_outer")
 
+            allIdDf2.show()
 
             // Convert data frame into vertex rdd
             val allId: RDD[(VertexId, String, String, String, String, Double, Int)] =
-                allIdDf2.rdd.map({ row => (row.get(0).toString.toLong,
+                allIdDf2.rdd.map({ row => (
+                  row.get(0).toString.toLong,
                   row.get(1).toString,
                   row.get(2).toString,
                   row.get(3).toString,
                   row.get(4).toString,
                   row.get(7).toString.toDouble *
                     ( 1 + math.log(1 + 1 / row.get(9).toString.toDouble) / math.log(2)), // ID weight
-                row.get(5).toString.toInt)
+                  row.get(5).toString.toInt)
                 })
-
-            // println(allId.sortBy(vertex => vertex._1).collect.mkString("\n"))
-            // val aa = allIdDf2.map(line => line(0),line(1))
 
             allId.repartition(1).saveAsTextFile("./target/data/")
 
             sc.stop()
-
         }
-
-
-
-
-
-
-
-      //  val allIdDF = sqlContext.createDataFrame(allId)
 
 
     }

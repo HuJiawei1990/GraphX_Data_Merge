@@ -22,6 +22,7 @@ object generateIdGraph {
         val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
         val sqlContext = new SQLContext(sc)
+        import sqlContext.implicits._
 
         // define variables
         /**
@@ -43,23 +44,74 @@ object generateIdGraph {
           */
         val dataDir = "./src/test/data/"
 
-        // ====== Graph node : all ID information
-        val allIdFile = "allIdValues.csv"
+        /** Read vertex information
+          * JOIN the vertex id & source table weight and ID type weight
+          */
+        val allIdFile = "allIdValues_o.csv"
         val allIdLine = sc.textFile(dataDir + allIdFile)
-        val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] = allIdLine.map {
-            line =>
-                val fields = line.split("\t")
-                (fields(0).toLong, // vertex ID
-                  ((fields(1), // source table
+        val allIdDF = allIdLine.map(line => line.split("\t"))
+          .map { fields =>
+              (fields(0).toLong, // vertex Id
+                fields(1), // source table
                     fields(2), // ID name (column name)
                     fields(3), // ID type
                     fields(4), // ID value
-                    fields(6).toDouble *
-                    //orderToWgt(fields(6).toInt) *
-                      orderToWgt(fields(7).toInt, isAscending = true)),
-                    0) // days difference from now to last update time
-                )
+                    fields(5).toInt) //date intervals
+              }.toDF()
+
+        //load weight for different tables
+        val srcTableFile = "srcTableList.csv"
+        val srcTableListDF = sc.textFile(dataDir + srcTableFile).map(line => line.split("\t"))
+        .map{
+            fields => (fields(0), fields(1))
+        }.toDF()
+
+        // load IDName's weight from csv file
+        val idNameFile = "idName.csv"
+        val idNameListDF = sc.textFile(dataDir + idNameFile).map(line => line.split("\t")).
+          map{
+              fields => (fields(0), fields(1))
+          }.toDF()
+
+        // JOIN the three Data Frame
+        val allIdDf1 = allIdDF.join(srcTableListDF, allIdDF("_2") === srcTableListDF("_1"), "left_outer")
+        val allIdDf2 = allIdDf1.join(idNameListDF, allIdDf1("_4") === idNameListDF("_1"), "left_outer")
+
+        if (myInfoLevel > 0) {
+            allIdDf2.show()
         }
+
+          // Convert data frame into vertex rdd
+        val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] =
+            allIdDf2.rdd.map{ row => (
+              row.get(0).toString.toLong,
+              ((row.get(1).toString,
+              row.get(2).toString,
+              row.get(3).toString,
+              row.get(4).toString,
+              orderToWgt(row.get(7).toString.toInt) *
+                orderToWgt(row.get(9).toString.toInt)),
+              row.get(5).toString.toInt))
+            }
+
+
+        // ====== Graph node : all ID information
+//        val allIdFile = "allIdValues.csv"
+//        val allIdLine = sc.textFile(dataDir + allIdFile)
+//        val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] = allIdLine.map {
+//            line =>
+//                val fields = line.split("\t")
+//                (fields(0).toLong, // vertex ID
+//                  ((fields(1), // source table
+//                    fields(2), // ID name (column name)
+//                    fields(3), // ID type
+//                    fields(4), // ID value
+//                    fields(6).toDouble *
+//                    //orderToWgt(fields(6).toInt) *
+//                      orderToWgt(fields(7).toInt, isAscending = true)),
+//                    0) // days difference from now to last update time
+//                )
+//        }
 
         if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
@@ -123,12 +175,8 @@ object generateIdGraph {
           */
 
         // generate the sub-graph which only contains the time information
-        var IdUpdateTime: RDD[(VertexId, Int)] = allIdLine.map {
-            line =>
-                val fields = line.split("\t")
-                (fields(0).toLong, // vertex ID
-                  fields(5).toInt // days difference from now to last update time
-                )
+        var IdUpdateTime: RDD[(VertexId, Int)] = allId.map {
+            line => (line._1, line._2._2)
         }.map { vertex =>
                 if (vertex._2 < 0) (vertex._1, Int.MaxValue) // change value -1 to Inf
                 else vertex
@@ -352,6 +400,7 @@ object generateIdGraph {
         sc.stop()
     }
 
+
     /**
       * Convert order information into a calculative real number between 0 and 1
       * deal with the ID's order and source Tables' order
@@ -444,6 +493,7 @@ object generateIdGraph {
         }
     }
 
+
     /**
       * Compute the final weight coefficient of ID
       * @param w1            basic weight of ID which defined by source table and ID type
@@ -484,8 +534,6 @@ object generateIdGraph {
         // keep 4 decimals
         (result * 10000).toInt / 10000.0
     }
-
-
 
 
 //  def deleteRecursively(file: File): Unit = {
