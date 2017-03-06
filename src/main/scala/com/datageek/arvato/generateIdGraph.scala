@@ -9,7 +9,7 @@ import java.time.LocalTime
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.graphx._
 import org.apache.commons.io.FileUtils
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{DataFrame, SQLContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
 
@@ -47,34 +47,40 @@ object generateIdGraph {
         /** Read vertex information
           * JOIN the vertex id & source table weight and ID type weight
           */
-        val allIdFile = "allIdValues_o.csv"
-        val allIdLine = sc.textFile(dataDir + allIdFile)
-        val allIdDF = allIdLine.map(line => line.split("\t")).map { fields =>
-              (fields(0).toLong, // vertex Id
-                fields(1), // source table
-                fields(2), // ID name (column name)
-                fields(3), // ID type
-                fields(4), // ID value
-                fields(5).toInt) //date intervals
-        }.cache().toDF()
+       // val allIdFile = "allIdValues_o.csv"
+       // val allIdLine = sc.textFile(dataDir + allIdFile)
+       //val allIdDF = allIdLine.map(line => line.split("\t")).map { fields =>
+       //       (fields(0).toLong, // vertex Id
+       //         fields(1), // source table
+       //         fields(2), // ID name (column name)
+       //         fields(3), // ID type
+       //         fields(4), // ID value
+       //         fields(5).toInt) //date intervals
+       // }.cache().toDF()
+
+        val allIdDF: DataFrame = _    //TODO: arvato_temp.allIDValues_test
 
         //load weight for different tables
-        val srcTableFile = "srcTableList.csv"
-        val srcTableListDF = sc.textFile(dataDir + srcTableFile).map(line => line.split("\t"))
-        .map{
-            fields => (fields(0), fields(1))
-        }.cache().toDF()
+       // val srcTableFile = "srcTableList.csv"
+       // val srcTableListDF = sc.textFile(dataDir + srcTableFile).map(line => line.split("\t"))
+       // .map{
+       //     fields => (fields(0), fields(1))
+       // }.cache().toDF()
+
+        val srcTableListDF: DataFrame = _   //TODO: arvato_temp.tb_source_wt_test
 
         // load IDName's weight from csv file
-        val idNameFile = "idName.csv"
-        val idNameListDF = sc.textFile(dataDir + idNameFile).map(line => line.split("\t")).
-          map{
-              fields => (fields(0), fields(1))
-          }.cache().toDF()
+       // val idNameFile = "idName.csv"
+       // val idNameListDF = sc.textFile(dataDir + idNameFile).map(line => line.split("\t")).
+       //   map{
+       //       fields => (fields(0), fields(1))
+       //   }.cache().toDF()
+
+        val idNameListDF: DataFrame = _ //TODO: arvato_temp.tb_IDType_wt_test
 
         // JOIN the three Data Frame
-        val allIdDf1 = allIdDF.join(srcTableListDF, allIdDF("_2") === srcTableListDF("_1"), "left_outer")
-        val allIdDf2 = allIdDf1.join(idNameListDF, allIdDf1("_4") === idNameListDF("_1"), "left_outer")
+        val allIdDf1 = allIdDF.join(srcTableListDF, allIdDF("tablename") === srcTableListDF("tb_name"), "left_outer")
+        val allIdDf2 = allIdDf1.join(idNameListDF, allIdDf1("idname") === idNameListDF("id_type"), "left_outer")
 
         // Convert data frame into vertex rdd
         val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] =
@@ -115,23 +121,26 @@ object generateIdGraph {
 
         // ===== Graph edges
         // ===== type I : all ID pairs from the same table
-        val IdParisFile1 = "associatedIdPairs.csv"
-        val IdPairs1: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile1).map {
+        //val IdParisFile1 = "associatedIdPairs.csv"
+        //val IdPairs1: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile1).map {
+         val IdPairs1DF: DataFrame = _  //TODO: arvato_temp.AssociatedIDPairs_test
+         val IdPairs1: RDD[Edge[Int]] = IdPairs1DF.rdd.map{
             line =>
-                val fields = line.split(",")
-                Edge(fields(1).toLong,      // source node ID
-                    fields(2).toLong,       // destination node ID
+                //val fields = line.split(",")
+                Edge(line.get(1).toString.toLong,      // source node ID
+                    line.get(2).toString.toLong,       // destination node ID
                     firstTypeEdgeWeight     // relationship type => from the same table
                 )
         }
 
         // ===== type II: all ID pairs have the same value
-        val IdParisFile2 = "associatedKeyByValue.csv"
-        val IdPairs2: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile2).map {
+        //val IdParisFile2 = "associatedKeyByValue.csv"
+        //val IdPairs2: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile2).map {
+        val idPairs2DF: DataFrame = _   //TODO: arvato_temp.AssociatedKeyByValue_test
+        val IdPairs2: RDD[Edge[Int]] = idPairs2DF.rdd.map {
             line =>
-                val fields = line.split("\t")
-                Edge( fields(1).toLong,      // source node ID
-                    fields(2).toLong,       // destination node ID
+                Edge( line.get(1).toString.toLong,      // source node ID
+                    line.get(2).toString.toLong,       // destination node ID
                     secondTypeEdgeWeight    // relationship type => from the same table
                 )
         }
