@@ -49,39 +49,34 @@ object generateIdGraph {
           */
         val allIdFile = "allIdValues_o.csv"
         val allIdLine = sc.textFile(dataDir + allIdFile)
-        val allIdDF = allIdLine.map(line => line.split("\t"))
-          .map { fields =>
+        val allIdDF = allIdLine.map(line => line.split("\t")).map { fields =>
               (fields(0).toLong, // vertex Id
                 fields(1), // source table
-                    fields(2), // ID name (column name)
-                    fields(3), // ID type
-                    fields(4), // ID value
-                    fields(5).toInt) //date intervals
-              }.toDF()
+                fields(2), // ID name (column name)
+                fields(3), // ID type
+                fields(4), // ID value
+                fields(5).toInt) //date intervals
+        }.cache().toDF()
 
         //load weight for different tables
         val srcTableFile = "srcTableList.csv"
         val srcTableListDF = sc.textFile(dataDir + srcTableFile).map(line => line.split("\t"))
         .map{
             fields => (fields(0), fields(1))
-        }.toDF()
+        }.cache().toDF()
 
         // load IDName's weight from csv file
         val idNameFile = "idName.csv"
         val idNameListDF = sc.textFile(dataDir + idNameFile).map(line => line.split("\t")).
           map{
               fields => (fields(0), fields(1))
-          }.toDF()
+          }.cache().toDF()
 
         // JOIN the three Data Frame
         val allIdDf1 = allIdDF.join(srcTableListDF, allIdDF("_2") === srcTableListDF("_1"), "left_outer")
         val allIdDf2 = allIdDf1.join(idNameListDF, allIdDf1("_4") === idNameListDF("_1"), "left_outer")
 
-        if (myInfoLevel > 0) {
-            allIdDf2.show()
-        }
-
-          // Convert data frame into vertex rdd
+        // Convert data frame into vertex rdd
         val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] =
             allIdDf2.rdd.map{ row => (
               row.get(0).toString.toLong,
@@ -92,26 +87,26 @@ object generateIdGraph {
               orderToWgt(row.get(7).toString.toInt) *
                 orderToWgt(row.get(9).toString.toInt)),
               row.get(5).toString.toInt))
-            }
+            }.cache()
 
 
         // ====== Graph node : all ID information
-//        val allIdFile = "allIdValues.csv"
-//        val allIdLine = sc.textFile(dataDir + allIdFile)
-//        val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] = allIdLine.map {
-//            line =>
-//                val fields = line.split("\t")
-//                (fields(0).toLong, // vertex ID
-//                  ((fields(1), // source table
-//                    fields(2), // ID name (column name)
-//                    fields(3), // ID type
-//                    fields(4), // ID value
-//                    fields(6).toDouble *
-//                    //orderToWgt(fields(6).toInt) *
-//                      orderToWgt(fields(7).toInt, isAscending = true)),
-//                    0) // days difference from now to last update time
-//                )
-//        }
+        //val allIdFile = "allIdValues.csv"
+        //val allIdLine = sc.textFile(dataDir + allIdFile)
+        //val allId: RDD[(VertexId, ((String, String, String, String, Double), Int))] = allIdLine.map {
+        //    line =>
+        //        val fields = line.split("\t")
+        //        (fields(0).toLong, // vertex ID
+        //          ((fields(1), // source table
+        //            fields(2), // ID name (column name)
+        //            fields(3), // ID type
+        //            fields(4), // ID value
+        //            fields(6).toDouble *
+        //            //orderToWgt(fields(6).toInt) *
+        //              orderToWgt(fields(7).toInt, isAscending = true)),
+        //            fields(5).toInt) // days difference from now to last update time
+        //        )
+        //  }
 
         if (myInfoLevel >= 1) {
             println("********** hjw test info **********")
@@ -180,7 +175,7 @@ object generateIdGraph {
         }.map { vertex =>
                 if (vertex._2 < 0) (vertex._1, Int.MaxValue) // change value -1 to Inf
                 else vertex
-        }
+        }.cache()
 
         if (myInfoLevel > 1) {
             println("********** hjw test info **********")
@@ -206,7 +201,7 @@ object generateIdGraph {
         // Update all vertices' update time to last information
         val updateTimeGraph = TimeGraph.joinVertices(IdUpdateTime) {
             case (_, oldDate, newDate) => math.min(oldDate, newDate.toInt)
-        }
+        }.cache()
 
         if (myInfoLevel > 1) {
             println("********** hjw test info **********")
@@ -217,39 +212,7 @@ object generateIdGraph {
         // Add time information to the original graph
         nonDirectedGraph = nonDirectedGraph.joinVertices(updateTimeGraph.vertices) {
             case (_, attr, updateTime) => (attr._1, updateTime)
-        }
-
-        /*
-    // ====================================
-    // ====== first exploration
-    // ====================================
-
-    // for a given ID value, find all its connected components
-    val myIdValue = "D0BA55FB-3216-407D-95B0-B9C2C8BFF323"
-
-    var selectedGraph = nonDirectedGraph.subgraph(
-      //vpred = (id, attr) => attr._4 == myIdValue,
-      epred = e => e.srcAttr._4 == myIdValue
-    )
-
-    // initialization
-    var selectedVertices = nonDirectedGraph.triplets.collect {
-      case triplet if triplet.srcAttr._4 == myIdValue && triplet.dstAttr._4 != myIdValue
-      => (triplet.dstId, triplet.dstAttr)
-    }
-
-    if (myInfoLevel > 1) {
-      println("********** hjw debug info **********")
-      println("*** all IDs connected with ID value = " + myIdValue)
-      println("*** there are " + selectedVertices.count() + " neighbours.")
-      //selectedGraph.vertices.map{
-      selectedVertices.map {
-        vertex =>
-          "Vertex ID " + vertex._1 + " from table " + vertex._2._1 +
-            " in column " + vertex._2._2 + " with value " + vertex._2._4
-      }.collect().map(println(_))
-    }
-    */
+        }.cache()
 
         //for (sourceId <- sourceIDList) {
         /** For a given source Vertex,
@@ -262,9 +225,7 @@ object generateIdGraph {
               * shortest path algorithm
               * count the jump times from one table to another when joining them
               */
-
-            val startTime = LocalTime.now()
-
+            val startTime = LocalTime.now().toSecondOfDay()
             val sourceIdValue: String = allId.filter(_._1 == sourceId).map(_._2._1._4).take(1)(0)
 
             // Define a initial graph which has the same structure with the original graph
@@ -306,6 +267,8 @@ object generateIdGraph {
                 println(connectedVertices.collect.mkString("\n"))
             }
 
+            val endTime1 = LocalTime.now().toSecondOfDay()
+
             /** ********** step 2.C **********
               * compute final weight for each vertex
               */
@@ -317,11 +280,13 @@ object generateIdGraph {
             val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices) {
                 case (_, attr, Some(pathLength)) => ((attr._1._3, attr._1._4,
                   computeWeight(attr._1._5, pathLength, attr._2, timeDecayModel = "sig" ,T_quad = 1000, T_half = 1800)), pathLength)
+                 // TODO: change params of time decay
                 case (_, attr, None) => ((attr._1._3, attr._1._4, attr._1._5), Double.PositiveInfinity)
             }.vertices.filter {
                 case (_, attr) => attr._2 < Double.PositiveInfinity
             }
 
+            val endTime2 = LocalTime.now().toSecondOfDay()
 
             /**
               * ********** step 2.D
@@ -364,6 +329,7 @@ object generateIdGraph {
                 attr => (attr._1._1, attr._1._2, attr._2)
             ).sortBy(vertex => (vertex._1, vertex._3), ascending = false)
 
+            // Save all information as file
             if (myInfoLevel > 0) {
                 cntedVerticesFinalInfo.repartition(1)
                   .saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
@@ -371,14 +337,17 @@ object generateIdGraph {
 
             // TODO: insert the result cntedVerticesFinalInfo into table T_merge (HBase)
 
-            val endTime = LocalTime.now()
-            val runTime = endTime.toNanoOfDay() - startTime.toNanoOfDay()
+            val endTime = LocalTime.now().toSecondOfDay
+            val runTime = endTime - startTime
 
             if (myInfoLevel > 0){
                 println("=========== hjw test info ==========")
                 println("Finding all connected vertices to Vertex No. " + sourceId.toString)
-                println(" *** " + sourceType + "=" + sourceIdValue + " ***")
-                println("Run time: " + runTime / math.pow(10, 6) + " ms.")
+                println("*** " + sourceType + " = " + sourceIdValue + " ***")
+                println("Run time: " + runTime + " seconds.")
+                println("===> step 2.B " + (endTime1 - startTime) + " seconds.")
+                println("===> step 2.C " + (endTime2 - endTime1) + " seconds.")
+                println("===> step 2.D " + (endTime - endTime2) + " seconds.")
                 println("=========== hjw info end  ===============")
             }
         }
