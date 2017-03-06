@@ -279,7 +279,7 @@ object generateIdGraph {
               */
             val connectedVerticesAllInfo = nonDirectedGraph.outerJoinVertices(shortestPathGraph.vertices) {
                 case (_, attr, Some(pathLength)) => ((attr._1._3, attr._1._4,
-                  computeWeight(attr._1._5, pathLength, attr._2, timeDecayModel = "sig" ,T_quad = 1000, T_half = 1800)), pathLength)
+                  computeWeight(attr._1._5, pathLength, attr._2, timeDecayModel = "log" ,T_total = 360, T_half = 200)), pathLength)
                  // TODO: change params of time decay
                 case (_, attr, None) => ((attr._1._3, attr._1._4, attr._1._5), Double.PositiveInfinity)
             }.vertices.filter {
