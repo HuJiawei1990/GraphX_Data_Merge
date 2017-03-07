@@ -13,19 +13,15 @@ import org.apache.spark.sql.{DataFrame, SQLContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
 
-object generateIdGraph {
+object generateIdGraph_bak {
     Logger.getLogger("org").setLevel(Level.ERROR)
     val myInfoLevel = 1
 
     def main(args: Array[String]): Unit = {
-        // spark initialization
-        //val conf = new SparkConf().setAppName("generateAllId")
         val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
         val sqlContext = new SQLContext(sc)
-        import sqlContext.implicits._
 
-        // define variables
         /**
           * prepares some variables for testing
           */
@@ -339,10 +335,12 @@ object generateIdGraph {
                 attr => (attr._1._1, attr._1._2, attr._2)
             ).sortBy(vertex => (vertex._1, vertex._3), ascending = false)
 
+            cntedVerticesFinalInfo
+
             // Save all information as file
             if (myInfoLevel > 0) {
-                cntedVerticesFinalInfo.repartition(1)
-                  .saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
+                val finalRDD = cntedVerticesFinalInfo.repartition(1)
+                  //.saveAsTextFile(outputDir + "/allInfo_" + sourceId.toString + "/")
             }
 
             // TODO: insert the result cntedVerticesFinalInfo into table T_merge (HBase)
