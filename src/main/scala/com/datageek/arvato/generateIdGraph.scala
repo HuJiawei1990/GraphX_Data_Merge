@@ -19,7 +19,8 @@ object generateIdGraph {
 
     def main(args: Array[String]): Unit = {
         // spark initialization
-        val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
+        val conf = new SparkConf().setAppName("generateAllId")
+        //val conf = new SparkConf().setAppName("generateAllId").setMaster("local")
         val sc = new SparkContext(conf)
         val sqlContext = new SQLContext(sc)
         import sqlContext.implicits._
@@ -59,6 +60,7 @@ object generateIdGraph {
        // }.cache().toDF()
 
         val allIdDF: DataFrame = _    //TODO: arvato_temp.allIDValues_test
+        //val allIdDF: DataFrame =     //TODO: arvato_temp.allIDValues_test
 
         //load weight for different tables
        // val srcTableFile = "srcTableList.csv"
@@ -90,8 +92,8 @@ object generateIdGraph {
               row.get(2).toString,
               row.get(3).toString,
               row.get(4).toString,
-              orderToWgt(row.get(7).toString.toInt) *
-                orderToWgt(row.get(9).toString.toInt)),
+              orderToWgt(row.get(7).toString.toDouble) *
+                orderToWgt(row.get(9).toString.toDouble)),
               row.get(5).toString.toInt))
             }.cache()
 
@@ -136,7 +138,7 @@ object generateIdGraph {
         // ===== type II: all ID pairs have the same value
         //val IdParisFile2 = "associatedKeyByValue.csv"
         //val IdPairs2: RDD[Edge[Int]] = sc.textFile(dataDir + IdParisFile2).map {
-        val idPairs2DF: DataFrame = _   //TODO: arvato_temp.AssociatedKeyByValue_test
+        val idPairs2DF: DataFrame = _       //TODO: arvato_temp.AssociatedKeyByValue_test
         val IdPairs2: RDD[Edge[Int]] = idPairs2DF.rdd.map {
             line =>
                 Edge( line.get(1).toString.toLong,      // source node ID
@@ -393,10 +395,10 @@ object generateIdGraph {
       *             false:           order No. is large => more important
       * @return    the weight value based on order, the value is between 0 and 1
       */
-    def orderToWgt(order: Int, maxOrder:Int = 10, isAscending: Boolean = true): Double = {
-        if (isAscending) (1 + math.log(1 + 1 / order.toDouble) / math.log(2)) / 2.0
+    def orderToWgt(order: Double, maxOrder: Double = 10, isAscending: Boolean = true): Double = {
+        if (isAscending) (1 + math.log(1 + 1 / order) / math.log(2)) / 2.0
         else {
-            (1 + math.log(1 + 1 / (maxOrder - order + 1).toDouble) / math.log(2)) / 2.0
+            (1 + math.log(1 + 1 / (maxOrder - order + 1)) / math.log(2)) / 2.0
         }
     }
 
